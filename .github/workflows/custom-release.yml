@@ -1,0 +1,180 @@
+---
+# Custom Release workflow for rclone fork
+# Based on official build.yml but simplified for GitHub Releases
+
+name: Custom Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  GO_VERSION: '>=1.25.0-rc.1'
+
+jobs:
+  create-release:
+    if: github.repository == 'Hittlert/rclone'
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      
+      - name: Get release info
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+          echo "date=$(date -u '+%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          release_name: 'rclone Custom Build ${{ steps.release_info.outputs.tag }}'
+          body: |
+            ## rclone Custom Build ${{ steps.release_info.outputs.tag }}
+            
+            ### Features
+            - ✨ **Custom filename obfuscation** for Windows compatibility
+            - 🔧 Enhanced crypt backend with CJK character set  
+            - 🎲 Deterministic obfuscation with Fisher-Yates shuffling
+            - 🔄 Full backward compatibility with existing modes
+            
+            ### Build Information
+            - **Branch**: feature/custom-filename-obfuscation
+            - **Commit**: ${{ steps.release_info.outputs.commit }}
+            - **Build Date**: ${{ steps.release_info.outputs.date }}
+            - **Go Version**: ${{ env.GO_VERSION }}
+            
+            ### Usage
+            Configure crypt backend with:
+            ```
+            filename_encryption = custom
+            ```
+            
+            The custom mode generates Windows-compatible filenames using CJK characters.
+          draft: false
+          prerelease: false
+
+  build-releases:
+    needs: create-release  
+    if: github.repository == 'Hittlert/rclone'
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job_name: linux-amd64
+            os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            
+          - job_name: linux-386  
+            os: ubuntu-latest
+            goos: linux
+            goarch: 386
+            
+          - job_name: windows-amd64
+            os: ubuntu-latest 
+            goos: windows
+            goarch: amd64
+            
+          - job_name: windows-386
+            os: ubuntu-latest
+            goos: windows  
+            goarch: 386
+            
+          - job_name: darwin-amd64
+            os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
+            
+          - job_name: darwin-arm64
+            os: ubuntu-latest
+            goos: darwin
+            goarch: arm64
+
+    name: Build ${{ matrix.job_name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get release info
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build rclone
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          # Determine file extension
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXT=".exe"
+          fi
+          
+          # Build binary
+          go build -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=${{ steps.release_info.outputs.tag }}" \
+            -o "rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" .
+
+      - name: Create archive
+        run: |
+          # Determine archive format  
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip -9 "rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" \
+              "rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+            echo "ASSET_NAME=rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" >> $GITHUB_ENV
+            echo "ASSET_PATH=rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" >> $GITHUB_ENV
+          else
+            tar -czf "rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
+              "rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            echo "ASSET_NAME=rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" >> $GITHUB_ENV  
+            echo "ASSET_PATH=rclone-${{ steps.release_info.outputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ env.ASSET_PATH }}
+          asset_name: ${{ env.ASSET_NAME }}
+          asset_content_type: application/octet-stream
