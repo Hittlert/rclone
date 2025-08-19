@@ -84,6 +84,7 @@ const (
 	NameEncryptionOff NameEncryptionMode = iota
 	NameEncryptionStandard
 	NameEncryptionObfuscated
+	NameEncryptionCustom
 )
 
 // NewNameEncryptionMode turns a string into a NameEncryptionMode
@@ -96,6 +97,8 @@ func NewNameEncryptionMode(s string) (mode NameEncryptionMode, err error) {
 		mode = NameEncryptionStandard
 	case "obfuscate":
 		mode = NameEncryptionObfuscated
+	case "custom":
+		mode = NameEncryptionCustom
 	default:
 		err = fmt.Errorf("unknown file name encryption mode %q", s)
 	}
@@ -111,6 +114,8 @@ func (mode NameEncryptionMode) String() (out string) {
 		out = "standard"
 	case NameEncryptionObfuscated:
 		out = "obfuscate"
+	case NameEncryptionCustom:
+		out = "custom"
 	default:
 		out = fmt.Sprintf("Unknown mode #%d", mode)
 	}
@@ -485,6 +490,32 @@ func (c *Cipher) deobfuscateSegment(ciphertext string) (string, error) {
 	return result.String(), nil
 }
 
+// customObfuscateSegment encrypts a path segment using custom obfuscation
+func (c *Cipher) customObfuscateSegment(plaintext string) string {
+	if plaintext == "" {
+		return ""
+	}
+	
+	// Use the nameKey as the key for custom obfuscation
+	key := string(c.nameKey[:])
+	return customObfuscateText(plaintext, key)
+}
+
+// customDeobfuscateSegment decrypts a path segment using custom deobfuscation
+func (c *Cipher) customDeobfuscateSegment(ciphertext string) (string, error) {
+	if ciphertext == "" {
+		return "", nil
+	}
+	
+	// Use the nameKey as the key for custom deobfuscation
+	key := string(c.nameKey[:])
+	plaintext, err := customDeobfuscateText(ciphertext, key)
+	if err != nil {
+		return "", ErrorNotAnEncryptedFile
+	}
+	return plaintext, nil
+}
+
 // encryptFileName encrypts a file path
 func (c *Cipher) encryptFileName(in string) string {
 	segments := strings.Split(in, "/")
@@ -511,6 +542,8 @@ func (c *Cipher) encryptFileName(in string) string {
 
 		if c.mode == NameEncryptionStandard {
 			segments[i] = c.encryptSegment(segments[i])
+		} else if c.mode == NameEncryptionCustom {
+			segments[i] = c.customObfuscateSegment(segments[i])
 		} else {
 			segments[i] = c.obfuscateSegment(segments[i])
 		}
@@ -567,6 +600,8 @@ func (c *Cipher) decryptFileName(in string) (string, error) {
 
 		if c.mode == NameEncryptionStandard {
 			segments[i], err = c.decryptSegment(segments[i])
+		} else if c.mode == NameEncryptionCustom {
+			segments[i], err = c.customDeobfuscateSegment(segments[i])
 		} else {
 			segments[i], err = c.deobfuscateSegment(segments[i])
 		}

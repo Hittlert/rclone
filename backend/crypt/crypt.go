@@ -48,6 +48,9 @@ func init() {
 					Value: "obfuscate",
 					Help:  "Very simple filename obfuscation.",
 				}, {
+					Value: "custom",
+					Help:  "Custom filename obfuscation with Windows-safe characters.",
+				}, {
 					Value: "off",
 					Help:  "Don't encrypt the file names.\nAdds a \".bin\", or \"suffix\" extension only.",
 				},
