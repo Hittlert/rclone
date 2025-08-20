@@ -498,7 +498,7 @@ func (c *Cipher) customObfuscateSegment(plaintext string) string {
 	
 	// Use the nameKey as the key for custom obfuscation
 	key := string(c.nameKey[:])
-	return customObfuscateText(plaintext, key)
+	return CustomObfuscateText(plaintext, key)
 }
 
 // customDeobfuscateSegment decrypts a path segment using custom deobfuscation
@@ -509,7 +509,7 @@ func (c *Cipher) customDeobfuscateSegment(ciphertext string) (string, error) {
 	
 	// Use the nameKey as the key for custom deobfuscation
 	key := string(c.nameKey[:])
-	plaintext, err := customDeobfuscateText(ciphertext, key)
+	plaintext, err := CustomDeobfuscateText(ciphertext, key)
 	if err != nil {
 		return "", ErrorNotAnEncryptedFile
 	}

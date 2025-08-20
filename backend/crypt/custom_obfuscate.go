@@ -8,205 +8,249 @@ import (
 	"sort"
 )
 
-// Constants for custom obfuscation
+// Constants for custom obfuscation v6.2
 const (
-	ivCharLength = 2
+	// IV is always encoded as exactly 3 bytes in UTF-8
+	ivByteLength = 3
 )
 
-// Global character set for custom obfuscation
+// Global character sets for custom obfuscation v6.2
 var (
-	charList      []rune
-	charToIndex   map[rune]int
-	indexToChar   map[int]rune
-	charSetSize   int
-	initialized   bool = false
+	// ASCII character set
+	asciiChars          []rune
+	asciiCharToIndex    map[rune]int
+	
+	// CJK character set (unified, no longer separated)
+	cjkChars            []rune
+	cjkCharToIndex      map[rune]int
+	
+	initialized         bool = false
 )
 
-// initCustomCharSet initializes the safe character set for custom obfuscation
+// initCustomCharSet initializes the character sets for custom obfuscation v6.2
 func initCustomCharSet() {
 	if initialized {
 		return
 	}
 
-	var chars []rune
-
+	// Initialize ASCII character set
+	asciiSet := make(map[rune]bool)
+	
 	// Add lowercase letters a-z
 	for i := 'a'; i <= 'z'; i++ {
-		chars = append(chars, i)
+		asciiSet[i] = true
 	}
 
 	// Add uppercase letters A-Z
 	for i := 'A'; i <= 'Z'; i++ {
-		chars = append(chars, i)
+		asciiSet[i] = true
 	}
 
 	// Add digits 0-9
 	for i := '0'; i <= '9'; i++ {
-		chars = append(chars, i)
+		asciiSet[i] = true
 	}
 
 	// Add safe ASCII punctuation
-	safeASCIIPunctuation := []rune{' ', '!', '#', '$', '%', '&', '(', ')', '+', ',', '-', '.', 
+	safeASCIIPunctuation := []rune{'!', '#', '$', '%', '&', '\'', '(', ')', '+', ',', '-', '.', 
 	                                ';', '=', '@', '[', ']', '^', '_', '`', '{', '}', '~'}
-	chars = append(chars, safeASCIIPunctuation...)
+	for _, char := range safeASCIIPunctuation {
+		asciiSet[char] = true
+	}
+
+	// Convert ASCII set to sorted slice
+	asciiChars = make([]rune, 0, len(asciiSet))
+	for char := range asciiSet {
+		asciiChars = append(asciiChars, char)
+	}
+	sort.Slice(asciiChars, func(i, j int) bool { return asciiChars[i] < asciiChars[j] })
+
+	// Create ASCII char to index mapping
+	asciiCharToIndex = make(map[rune]int)
+	for i, char := range asciiChars {
+		asciiCharToIndex[char] = i
+	}
+
+	// Initialize unified CJK character set (no longer separated)
+	cjkSet := make(map[rune]bool)
 
 	// Add CJK Unified Ideographs (Chinese characters)
 	for i := 0x4E00; i <= 0x9FFF; i++ {
-		chars = append(chars, rune(i))
+		cjkSet[rune(i)] = true
 	}
 
 	// Add Hiragana
 	for i := 0x3040; i <= 0x309F; i++ {
-		chars = append(chars, rune(i))
+		cjkSet[rune(i)] = true
 	}
 
 	// Add Katakana
 	for i := 0x30A0; i <= 0x30FF; i++ {
-		chars = append(chars, rune(i))
+		cjkSet[rune(i)] = true
 	}
 
-	// Add Hangul Syllables (Korean characters)
-	for i := 0xAC00; i <= 0xD7A3; i++ {
-		chars = append(chars, rune(i))
+	// Convert CJK set to sorted slice
+	cjkChars = make([]rune, 0, len(cjkSet))
+	for char := range cjkSet {
+		cjkChars = append(cjkChars, char)
+	}
+	sort.Slice(cjkChars, func(i, j int) bool { return cjkChars[i] < cjkChars[j] })
+
+	// Create CJK char to index mapping
+	cjkCharToIndex = make(map[rune]int)
+	for i, char := range cjkChars {
+		cjkCharToIndex[char] = i
 	}
 
-	// Remove duplicates and sort, also exclude control characters
-	charSet := make(map[rune]bool)
-	for _, char := range chars {
-		// Exclude null character and other control characters below 0x20 except space
-		if char == 0 || (char < 0x20 && char != ' ') {
-			continue
-		}
-		charSet[char] = true
-	}
-
-	charList = make([]rune, 0, len(charSet))
-	for char := range charSet {
-		charList = append(charList, char)
-	}
-	sort.Slice(charList, func(i, j int) bool { return charList[i] < charList[j] })
-
-	// Create mapping dictionaries
-	charToIndex = make(map[rune]int)
-	indexToChar = make(map[int]rune)
-	for i, char := range charList {
-		charToIndex[char] = i
-		indexToChar[i] = char
-	}
-
-	charSetSize = len(charList)
 	initialized = true
 }
 
-// getSeededRandomValue generates a deterministic random value based on key, IV, and position
-func getSeededRandomValue(key string, ivNumeric int64, position int) int64 {
-	ivBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(ivBytes, uint64(ivNumeric))
+// getCharType determines the character type for v6.2 algorithm
+func getCharType(char rune) string {
+	if _, exists := asciiCharToIndex[char]; exists {
+		return "ASCII"
+	}
+	if _, exists := cjkCharToIndex[char]; exists {
+		return "CJK"
+	}
+	return "UNKNOWN"
+}
+
+// generateSmartIV generates a 3-byte smart IV based on v6.2 algorithm
+func generateSmartIV(text string, key string) string {
+	seedData := text + key + "IV_V6.2"
+	hashValue := sha256.Sum256([]byte(seedData))
 	
-	combinedSeedMaterial := append([]byte(key), ivBytes...)
-	seedHash := sha256.Sum256(combinedSeedMaterial)
+	// Use hash to determine IV type
+	ivTypeSelector := binary.BigEndian.Uint16(hashValue[0:2]) % 2
 	
-	seed := int64(binary.BigEndian.Uint64(seedHash[:8])) + int64(position)
+	if ivTypeSelector == 0 && len(cjkChars) > 0 {
+		// CJK IV: use 1 CJK character (3 bytes)
+		ivIndex := binary.BigEndian.Uint32(hashValue[2:6]) % uint32(len(cjkChars))
+		return string(cjkChars[ivIndex])
+	} else {
+		// ASCII IV: use 3 ASCII characters (3 bytes)
+		ivChars := make([]rune, 3)
+		seedVal := binary.BigEndian.Uint32(hashValue[2:6])
+		for i := 0; i < 3; i++ {
+			charIndex := (seedVal + uint32(i)*uint32(hashValue[i+6])) % uint32(len(asciiChars))
+			ivChars[i] = asciiChars[charIndex]
+		}
+		return string(ivChars)
+	}
+}
+// parseIVByBytes parses IV using the head-3-bytes method from v6.2
+func parseIVByBytes(obfuscatedText string) (string, string, error) {
+	if obfuscatedText == "" {
+		return "", "", nil
+	}
+	
+	// Convert to bytes and check if we have at least 3 bytes
+	encodedBytes := []byte(obfuscatedText)
+	if len(encodedBytes) < ivByteLength {
+		return "", "", fmt.Errorf("encoded text is less than %d bytes", ivByteLength)
+	}
+	
+	// Extract first 3 bytes as IV
+	headerBytes := encodedBytes[:ivByteLength]
+	ivString := string(headerBytes)
+	
+	// Calculate how many characters the IV string contains
+	ivRunes := []rune(ivString)
+	ivCharLen := len(ivRunes)
+	
+	// Extract the data part (remaining characters after IV)
+	allRunes := []rune(obfuscatedText)
+	if len(allRunes) < ivCharLen {
+		return "", "", fmt.Errorf("obfuscated text too short")
+	}
+	
+	dataString := string(allRunes[ivCharLen:])
+	return ivString, dataString, nil
+}
+
+// generatePositionShuffle generates deterministic position shuffle based on v5.3 algorithm (Go native)
+func generatePositionShuffle(key string, iv string, textLen int) []int {
+	if textLen == 0 {
+		return []int{}
+	}
+	
+	shuffleSeedData := key + iv + "SHUFFLE" + fmt.Sprintf("%d", textLen)
+	hashValue := sha256.Sum256([]byte(shuffleSeedData))
+	
+	// Use hash directly as seed for Go's native random generator
+	seed := int64(binary.BigEndian.Uint64(hashValue[:8]))
 	rng := rand.New(rand.NewSource(seed))
 	
-	return rng.Int63()
+	// Create position array and shuffle (Fisher-Yates)
+	positions := make([]int, textLen)
+	for i := 0; i < textLen; i++ {
+		positions[i] = i
+	}
+	
+	// Fisher-Yates shuffle using Go's algorithm
+	for i := textLen - 1; i > 0; i-- {
+		j := rng.Intn(i + 1)
+		positions[i], positions[j] = positions[j], positions[i]
+	}
+	
+	return positions
 }
 
-// ivToChars converts numeric IV to character representation
-func ivToChars(ivNumeric int64, length int) string {
-	if charSetSize == 0 {
-		panic("character set is empty, cannot generate IV characters")
-	}
+// mapCharacter maps a single character based on v6.2 algorithm
+func mapCharacter(char rune, newPos int, textLen int, key string, iv string) rune {
+	charType := getCharType(char)
+	mapSeedData := key + iv + fmt.Sprintf("%d", newPos) + fmt.Sprintf("%d", textLen) + charType
+	hashValue := sha256.Sum256([]byte(mapSeedData))
+	offset := binary.BigEndian.Uint64(hashValue[:8])
 
-	maxIVValuePossible := int64(1)
-	for i := 0; i < length; i++ {
-		maxIVValuePossible *= int64(charSetSize)
-	}
-	maxIVValuePossible--
-
-	if ivNumeric > maxIVValuePossible {
-		ivNumeric = ivNumeric % (maxIVValuePossible + 1)
-	}
-
-	var ivIndices []int
-	tempIV := ivNumeric
-	for i := 0; i < length; i++ {
-		ivIndices = append(ivIndices, int(tempIV%int64(charSetSize)))
-		tempIV /= int64(charSetSize)
-	}
-
-	// Reverse the indices
-	for i := 0; i < len(ivIndices)/2; i++ {
-		j := len(ivIndices) - 1 - i
-		ivIndices[i], ivIndices[j] = ivIndices[j], ivIndices[i]
-	}
-
-	var ivChars []rune
-	for _, idx := range ivIndices {
-		ivChars = append(ivChars, indexToChar[idx])
-	}
-
-	return string(ivChars)
-}
-
-// charsToIV converts character representation to numeric IV
-func charsToIV(ivChars string) (int64, error) {
-	if charSetSize == 0 {
-		panic("character set is empty, cannot parse IV characters")
-	}
-
-	var ivNumeric int64 = 0
-	for _, char := range ivChars {
-		if index, exists := charToIndex[char]; exists {
-			ivNumeric = ivNumeric*int64(charSetSize) + int64(index)
-		} else {
-			return 0, fmt.Errorf("IV character '%c' not in character set, cannot parse", char)
+	switch charType {
+	case "ASCII":
+		if index, exists := asciiCharToIndex[char]; exists {
+			newIndex := (uint64(index) + offset) % uint64(len(asciiChars))
+			return asciiChars[newIndex]
+		}
+	case "CJK":
+		if index, exists := cjkCharToIndex[char]; exists {
+			newIndex := (uint64(index) + offset) % uint64(len(cjkChars))
+			return cjkChars[newIndex]
 		}
 	}
-
-	return ivNumeric, nil
+	
+	// Unknown character type, return as-is
+	return char
 }
 
-// getDeterministicPermutationMaps generates deterministic permutation maps for position shuffling
-func getDeterministicPermutationMaps(key string, ivNumeric int64, length int) ([]int, []int) {
-	if length == 0 {
-		return []int{}, []int{}
-	}
+// reverseMapCharacter reverses character mapping based on v6.2 algorithm
+func reverseMapCharacter(mappedChar rune, newPos int, textLen int, key string, iv string) rune {
+	charType := getCharType(mappedChar)
+	mapSeedData := key + iv + fmt.Sprintf("%d", newPos) + fmt.Sprintf("%d", textLen) + charType
+	hashValue := sha256.Sum256([]byte(mapSeedData))
+	offset := binary.BigEndian.Uint64(hashValue[:8])
 
-	// Create permutation seed
-	ivBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(ivBytes, uint64(ivNumeric))
+	switch charType {
+	case "ASCII":
+		if index, exists := asciiCharToIndex[mappedChar]; exists {
+			charSetSize := uint64(len(asciiChars))
+			offsetMod := offset % charSetSize
+			originalIndex := (uint64(index) + charSetSize - offsetMod) % charSetSize
+			return asciiChars[originalIndex]
+		}
+	case "CJK":
+		if index, exists := cjkCharToIndex[mappedChar]; exists {
+			charSetSize := uint64(len(cjkChars))
+			offsetMod := offset % charSetSize
+			originalIndex := (uint64(index) + charSetSize - offsetMod) % charSetSize
+			return cjkChars[originalIndex]
+		}
+	}
 	
-	permutationSeedMaterial := append([]byte(key), ivBytes...)
-	permutationSeedMaterial = append(permutationSeedMaterial, []byte("POS_PERM_SALT")...)
-	permutationSeed := sha256.Sum256(permutationSeedMaterial)
-	
-	seed := int64(binary.BigEndian.Uint64(permutationSeed[:8]))
-	permRng := rand.New(rand.NewSource(seed))
-
-	// Initialize original to new position map
-	originalToNewPosMap := make([]int, length)
-	for i := 0; i < length; i++ {
-		originalToNewPosMap[i] = i
-	}
-
-	// Fisher-Yates shuffle
-	for i := length - 1; i > 0; i-- {
-		j := permRng.Intn(i + 1)
-		originalToNewPosMap[i], originalToNewPosMap[j] = originalToNewPosMap[j], originalToNewPosMap[i]
-	}
-
-	// Build reverse mapping
-	newToOriginalPosMap := make([]int, length)
-	for originalIdx, newIdx := range originalToNewPosMap {
-		newToOriginalPosMap[newIdx] = originalIdx
-	}
-
-	return originalToNewPosMap, newToOriginalPosMap
+	// Unknown character type, return as-is
+	return mappedChar
 }
 
-// customObfuscateText implements the custom obfuscation algorithm
-func customObfuscateText(text string, key string) string {
+// CustomObfuscateText implements the custom obfuscation algorithm v6.2
+func CustomObfuscateText(text string, key string) string {
 	// Handle empty string specially
 	if text == "" {
 		return ""
@@ -214,103 +258,80 @@ func customObfuscateText(text string, key string) string {
 	
 	// Initialize character set if not done
 	initCustomCharSet()
-
-	// Step 1: Generate deterministic IV based on key and original text content
-	combinedSeedForIV := key + text
-	ivHash := sha256.Sum256([]byte(combinedSeedForIV))
-	// Use absolute value to ensure positive number
-	ivNumeric := int64(binary.BigEndian.Uint64(ivHash[:8]) & 0x7FFFFFFFFFFFFFFF)
-
-	// Ensure IV fits within character set bounds
-	maxIVValuePossible := int64(1)
-	for i := 0; i < ivCharLength; i++ {
-		maxIVValuePossible *= int64(charSetSize)
-	}
-	maxIVValuePossible--
-
-	if ivNumeric > maxIVValuePossible {
-		ivNumeric = ivNumeric % (maxIVValuePossible + 1)
-	}
-
-	ivPrefixChars := ivToChars(ivNumeric, ivCharLength)
-
-	// Step 2: Generate permutation mapping (original_pos -> new_pos)
+	
+	// Step 1: Generate smart IV
+	iv := generateSmartIV(text, key)
+	
+	// Step 2: Generate position shuffle
 	textRunes := []rune(text)
-	originalToNewPosMap, _ := getDeterministicPermutationMaps(key, ivNumeric, len(textRunes))
-
-	// Step 3: Apply position permutation: shuffle original string positions
-	shuffledTextList := make([]rune, len(textRunes))
-	for originalPos, newPos := range originalToNewPosMap {
-		shuffledTextList[newPos] = textRunes[originalPos]
+	textLen := len(textRunes)
+	shufflePositions := generatePositionShuffle(key, iv, textLen)
+	
+	// Step 3: Apply position shuffle and character mapping
+	obfuscatedChars := make([]rune, textLen)
+	for newPos, oldPos := range shufflePositions {
+		char := textRunes[oldPos]
+		mappedChar := mapCharacter(char, newPos, textLen, key, iv)
+		obfuscatedChars[newPos] = mappedChar
 	}
-
-	// Step 4: Character shifting: obfuscate each character in the shuffled string
-	obfuscatedChars := make([]rune, len(shuffledTextList))
-	for i, char := range shuffledTextList {
-		if index, exists := charToIndex[char]; exists {
-			// Character is in our character set, apply shifting
-			effectiveShiftAmountBase := getSeededRandomValue(key, ivNumeric, i)
-			effectiveShiftAmount := int(effectiveShiftAmountBase % int64(charSetSize))
-			
-			newCharSetIndex := (index + effectiveShiftAmount) % charSetSize
-			obfuscatedChars[i] = indexToChar[newCharSetIndex]
-		} else {
-			// Character not in our character set, keep as-is
-			obfuscatedChars[i] = char
-		}
-	}
-
-	return ivPrefixChars + string(obfuscatedChars)
+	
+	return iv + string(obfuscatedChars)
 }
 
-// customDeobfuscateText implements the custom deobfuscation algorithm
-func customDeobfuscateText(obfuscatedText string, key string) (string, error) {
+// internalDeobfuscateText implements the internal deobfuscation logic without validation
+func internalDeobfuscateText(obfuscatedText string, key string) (string, error) {
+	// Initialize character set if not done
+	initCustomCharSet()
+	
+	// Step 1: Parse IV using head-3-bytes method
+	iv, dataPart, err := parseIVByBytes(obfuscatedText)
+	if err != nil {
+		return "", err
+	}
+
+	// Step 2: Generate same position shuffle
+	dataRunes := []rune(dataPart)
+	dataLen := len(dataRunes)
+	shufflePositions := generatePositionShuffle(key, iv, dataLen)
+
+	// Step 3: Reverse character mapping
+	reversedMapChars := make([]rune, dataLen)
+	for newPos, char := range dataRunes {
+		reversedChar := reverseMapCharacter(char, newPos, dataLen, key, iv)
+		reversedMapChars[newPos] = reversedChar
+	}
+
+	// Step 4: Reverse position shuffle
+	originalChars := make([]rune, dataLen)
+	for newPos, oldPos := range shufflePositions {
+		originalChars[oldPos] = reversedMapChars[newPos]
+	}
+
+	return string(originalChars), nil
+}
+
+// CustomDeobfuscateText implements the custom deobfuscation algorithm v6.2 with integrity validation
+func CustomDeobfuscateText(obfuscatedText string, key string) (string, error) {
 	// Handle empty string specially
 	if obfuscatedText == "" {
 		return "", nil
 	}
 	
-	// Initialize character set if not done
-	initCustomCharSet()
-
-	if len([]rune(obfuscatedText)) < ivCharLength {
-		return "", fmt.Errorf("obfuscated string too short, cannot extract %d IV characters", ivCharLength)
-	}
-
-	obfuscatedRunes := []rune(obfuscatedText)
-	ivPrefixChars := string(obfuscatedRunes[:ivCharLength])
-	actualObfuscatedData := obfuscatedRunes[ivCharLength:]
-
-	ivNumeric, err := charsToIV(ivPrefixChars)
+	// Step 1: Normal deobfuscation
+	recoveredText, err := internalDeobfuscateText(obfuscatedText, key)
 	if err != nil {
-		return "", err
+		return "", err // If initial deobfuscation fails, return error
 	}
 
-	// Step 1: Character reverse shifting: restore character original values, 
-	// but they are still in shuffled positions
-	intermediateUnshuffledChars := make([]rune, len(actualObfuscatedData))
-	for i, char := range actualObfuscatedData {
-		if index, exists := charToIndex[char]; exists {
-			// Character is in our character set, apply reverse shifting
-			effectiveShiftAmountBase := getSeededRandomValue(key, ivNumeric, i)
-			effectiveShiftAmount := int(effectiveShiftAmountBase % int64(charSetSize))
-			
-			originalIndexInCharSet := (index - effectiveShiftAmount + charSetSize) % charSetSize
-			intermediateUnshuffledChars[i] = indexToChar[originalIndexInCharSet]
-		} else {
-			// Character not in our character set, keep as-is
-			intermediateUnshuffledChars[i] = char
-		}
+	// Step 2: Re-obfuscate the recovered text
+	reObfuscatedText := CustomObfuscateText(recoveredText, key)
+
+	// Step 3: Compare with original obfuscated text (zero-overhead integrity check)
+	if reObfuscatedText == obfuscatedText {
+		// If consistent, deobfuscation was successful
+		return recoveredText, nil
+	} else {
+		// Inconsistent, indicates invalid input or wrong key
+		return "", fmt.Errorf("integrity check failed: invalid input or wrong key")
 	}
-
-	// Step 2: Generate reverse permutation mapping (new_pos -> original_pos)
-	_, newToOriginalPosMap := getDeterministicPermutationMaps(key, ivNumeric, len(actualObfuscatedData))
-
-	// Step 3: Apply reverse permutation: restore characters to their original positions
-	finalOriginalTextList := make([]rune, len(actualObfuscatedData))
-	for newPos, originalPos := range newToOriginalPosMap {
-		finalOriginalTextList[originalPos] = intermediateUnshuffledChars[newPos]
-	}
-
-	return string(finalOriginalTextList), nil
 }

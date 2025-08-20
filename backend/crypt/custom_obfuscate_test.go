@@ -40,12 +40,16 @@ func TestCustomObfuscation(t *testing.T) {
 			name:  "long filename",
 			input: "this_is_a_very_long_filename_with_many_characters_to_test_the_obfuscation_algorithm.txt",
 		},
+		{
+			name:  "very long filename near limit",
+			input: "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的文件名.txt",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Test obfuscation
-			obfuscated := customObfuscateText(tc.input, key)
+			obfuscated := CustomObfuscateText(tc.input, key)
 			
 			// Test that obfuscation changes the input (except for empty string)
 			if tc.input != "" {
@@ -55,7 +59,7 @@ func TestCustomObfuscation(t *testing.T) {
 			}
 			
 			// Test deobfuscation
-			deobfuscated, err := customDeobfuscateText(obfuscated, key)
+			deobfuscated, err := CustomDeobfuscateText(obfuscated, key)
 			require.NoError(t, err, "Deobfuscation should not error")
 			assert.Equal(t, tc.input, deobfuscated, "Deobfuscated text should match original input")
 		})
@@ -68,8 +72,8 @@ func TestCustomObfuscationConsistency(t *testing.T) {
 	input := "test2.py"
 	
 	// Obfuscate multiple times
-	obfuscated1 := customObfuscateText(input, key)
-	obfuscated2 := customObfuscateText(input, key)
+	obfuscated1 := CustomObfuscateText(input, key)
+	obfuscated2 := CustomObfuscateText(input, key)
 	
 	assert.Equal(t, obfuscated1, obfuscated2, "Same input should produce same obfuscated output")
 }
@@ -80,8 +84,8 @@ func TestCustomObfuscationWithDifferentKeys(t *testing.T) {
 	key2 := "key2"
 	input := "test2.py"
 	
-	obfuscated1 := customObfuscateText(input, key1)
-	obfuscated2 := customObfuscateText(input, key2)
+	obfuscated1 := CustomObfuscateText(input, key1)
+	obfuscated2 := CustomObfuscateText(input, key2)
 	
 	assert.NotEqual(t, obfuscated1, obfuscated2, "Different keys should produce different obfuscated outputs")
 }
